@@ -17,7 +17,8 @@ import {
   CheckCircle2,
   XCircle
 } from 'lucide-react';
-import socket from './socket';
+import { db } from './firebase';
+import { ref, onValue, set, push, update, onDisconnect, get } from 'firebase/database';
 import { Room, Player, Role, CASES, Case, LogEntry } from './types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -35,84 +36,49 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [objectionActive, setObjectionActive] = useState<string | null>(null);
   const [isJudge, setIsJudge] = useState(false);
-  const [isConnected, setIsConnected] = useState(socket.connected);
+  const [playerId, setPlayerId] = useState<string>('');
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const onConnect = () => {
-      setIsConnected(true);
-      setError('');
-      console.log('Connected to socket server');
-    };
-
-    const onDisconnect = () => {
-      setIsConnected(false);
-      console.log('Disconnected from socket server');
-    };
-
-    const onConnectError = (err: any) => {
-      console.error('Socket connection error:', err);
-      if (window.location.hostname.includes('vercel.app')) {
-        setError('تنبيه: منصة Vercel لا تدعم نظام الأونلاين لهذه اللعبة. يرجى استخدام رابط المعاينة في AI Studio.');
-      } else {
-        setError(`خطأ في الاتصال: ${err.message || 'تعذر الوصول للخادم'}`);
-      }
-    };
-
-    // Check if server is alive via HTTP first
-    fetch('/api/status')
-      .then(res => res.json())
-      .then(data => console.log('Server Status:', data))
-      .catch(err => {
-        console.error('Server unreachable via HTTP:', err);
-        setError('الخادم غير مستجيب. جاري إعادة المحاولة...');
-      });
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('connect_error', onConnectError);
-    socket.on('error', (err: any) => {
-      console.error('Socket error:', err);
-      setError(`خطأ تقني: ${typeof err === 'string' ? err : 'حدث خطأ غير متوقع'}`);
-    });
-
-    socket.on('room_created', (newRoom: Room) => {
-      setRoom(newRoom);
-      setIsJudge(true);
-      setError('');
-    });
-
-    socket.on('room_updated', (updatedRoom: Room) => {
-      setRoom(updatedRoom);
-    });
-
-    socket.on('game_started', (startedRoom: Room) => {
-      setRoom(startedRoom);
-    });
-
-    socket.on('new_log', (log: LogEntry) => {
-      setRoom(prev => prev ? { ...prev, logs: [...prev.logs, log] } : null);
-    });
-
-    socket.on('objection_raised', ({ playerName }: { playerName: string }) => {
-      setObjectionActive(playerName);
-      setTimeout(() => setObjectionActive(null), 3000);
-    });
-
-    socket.on('error', (msg: string) => {
-      setError(msg);
-    });
-
-    return () => {
-      socket.off('room_created');
-      socket.off('room_updated');
-      socket.off('game_started');
-      socket.off('new_log');
-      socket.off('objection_raised');
-      socket.off('error');
-    };
+    // Generate a unique player ID if not exists
+    const storedId = localStorage.getItem('verdict_player_id') || Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('verdict_player_id', storedId);
+    setPlayerId(storedId);
   }, []);
+
+  useEffect(() => {
+    if (!roomId) return;
+
+    const roomRef = ref(db, `rooms/${roomId}`);
+    const unsubscribe = onValue(roomRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        // Convert players object to array
+        const playersArray = data.players ? Object.values(data.players) as Player[] : [];
+        const logsArray = data.logs ? Object.values(data.logs) as LogEntry[] : [];
+        
+        setRoom({
+          ...data,
+          players: playersArray,
+          logs: logsArray
+        });
+
+        // Check for active objection
+        if (data.activeObjection) {
+          setObjectionActive(data.activeObjection.playerName);
+          setTimeout(() => {
+            update(ref(db, `rooms/${roomId}`), { activeObjection: null });
+          }, 3000);
+        }
+      } else {
+        setRoom(null);
+        if (roomId) setError('الغرفة غير موجودة');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [roomId]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -120,48 +86,126 @@ export default function App() {
     }
   }, [room?.logs]);
 
-  const createRoom = () => {
+  const createRoom = async () => {
     if (!playerName || !password) return setError('يرجى إدخال الاسم وكلمة المرور');
-    socket.emit('create_room', { playerName, password });
+    if (password !== 'svoo') return setError('كلمة مرور القاضي غير صحيحة');
+
+    const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const newRoom = {
+      id: newRoomId,
+      judgeId: playerId,
+      status: 'lobby',
+      currentCase: null,
+      phase: 'waiting',
+      players: {
+        [playerId]: { id: playerId, name: playerName, role: 'judge' }
+      }
+    };
+
+    try {
+      await set(ref(db, `rooms/${newRoomId}`), newRoom);
+      setRoomId(newRoomId);
+      setIsJudge(true);
+      setError('');
+      
+      // Handle disconnect
+      onDisconnect(ref(db, `rooms/${newRoomId}/players/${playerId}`)).remove();
+    } catch (err) {
+      setError('فشل إنشاء الغرفة');
+    }
   };
 
-  const joinRoom = () => {
+  const joinRoom = async () => {
     if (!playerName || !roomId) return setError('يرجى إدخال الاسم ورقم الغرفة');
-    socket.emit('join_room', { roomId, playerName });
+    const upperRoomId = roomId.toUpperCase();
+    
+    try {
+      const snapshot = await get(ref(db, `rooms/${upperRoomId}`));
+      if (!snapshot.exists()) return setError('الغرفة غير موجودة');
+      
+      const roomData = snapshot.val();
+      const players = roomData.players || {};
+      
+      if (Object.keys(players).length >= 12) return setError('الغرفة ممتلئة');
+
+      await set(ref(db, `rooms/${upperRoomId}/players/${playerId}`), {
+        id: playerId,
+        name: playerName,
+        role: 'unassigned'
+      });
+
+      setRoomId(upperRoomId);
+      setError('');
+      
+      // Handle disconnect
+      onDisconnect(ref(db, `rooms/${upperRoomId}/players/${playerId}`)).remove();
+    } catch (err) {
+      setError('فشل الانضمام للغرفة');
+    }
   };
 
-  const assignRole = (playerId: string, role: Role) => {
-    if (!room) return;
-    const assignments = room.players.map(p => ({
-      playerId: p.id,
-      role: p.id === playerId ? role : p.role
-    }));
-    socket.emit('assign_roles', { roomId: room.id, assignments });
+  const assignRole = (targetPlayerId: string, role: Role) => {
+    if (!room || !roomId) return;
+    update(ref(db, `rooms/${roomId}/players/${targetPlayerId}`), { role });
   };
 
   const startGame = (selectedCase: Case) => {
-    if (!room) return;
-    socket.emit('start_game', { roomId: room.id, selectedCase });
+    if (!room || !roomId) return;
+    update(ref(db, `rooms/${roomId}`), {
+      status: 'playing',
+      currentCase: selectedCase,
+      phase: 'opening_statements'
+    });
   };
 
   const sendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!message || !room) return;
-    socket.emit('send_message', { roomId: room.id, message });
+    if (!message || !room || !roomId) return;
+    
+    const currentPlayer = room.players.find(p => p.id === playerId);
+    if (!currentPlayer) return;
+
+    const logRef = push(ref(db, `rooms/${roomId}/logs`));
+    set(logRef, {
+      id: Date.now(),
+      sender: currentPlayer.name,
+      role: currentPlayer.role,
+      text: message,
+      type: 'chat'
+    });
     setMessage('');
   };
 
   const raiseObjection = () => {
-    if (!room) return;
-    socket.emit('objection', { roomId: room.id });
-    socket.emit('send_message', { roomId: room.id, message: 'اعتراض!', type: 'objection' });
+    if (!room || !roomId) return;
+    const currentPlayer = room.players.find(p => p.id === playerId);
+    
+    update(ref(db, `rooms/${roomId}`), {
+      activeObjection: { playerName: currentPlayer?.name }
+    });
+
+    const logRef = push(ref(db, `rooms/${roomId}/logs`));
+    set(logRef, {
+      id: Date.now(),
+      sender: currentPlayer?.name,
+      role: currentPlayer?.role,
+      text: 'اعتراض!',
+      type: 'objection'
+    });
   };
 
   const judgeDecision = (decision: 'sustained' | 'overruled') => {
-    if (!room) return;
+    if (!room || !roomId) return;
     const text = decision === 'sustained' ? 'تم قبول الاعتراض (Sustained)' : 'تم رفض الاعتراض (Overruled)';
-    socket.emit('judge_decision', { roomId: room.id, decision });
-    socket.emit('send_message', { roomId: room.id, message: text, type: 'decision' });
+    
+    const logRef = push(ref(db, `rooms/${roomId}/logs`));
+    set(logRef, {
+      id: Date.now(),
+      sender: playerName,
+      role: 'judge',
+      text: text,
+      type: 'decision'
+    });
   };
 
   if (!room) {
@@ -187,7 +231,7 @@ export default function App() {
                 type="text" 
                 value={playerName}
                 onChange={(e) => setPlayerName(e.target.value)}
-                className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all"
+                className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all text-right"
                 placeholder="أدخل اسمك..."
               />
             </div>
@@ -224,7 +268,7 @@ export default function App() {
                     type="password" 
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-black/40 border border-white/5 rounded-xl pl-4 pr-10 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all"
+                    className="w-full bg-black/40 border border-white/5 rounded-xl pl-4 pr-10 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all text-right"
                     placeholder="أدخل كلمة المرور..."
                   />
                 </div>
@@ -242,7 +286,7 @@ export default function App() {
                   type="text" 
                   value={roomId}
                   onChange={(e) => setRoomId(e.target.value)}
-                  className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all uppercase"
+                  className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all uppercase text-center font-mono tracking-widest"
                   placeholder="أدخل الكود..."
                 />
                 <button 
@@ -265,7 +309,7 @@ export default function App() {
     );
   }
 
-  const currentPlayer = room.players.find(p => p.id === socket.id);
+  const currentPlayer = room.players.find(p => p.id === playerId);
 
   return (
     <div className="h-screen flex flex-col bg-zinc-950 overflow-hidden">
@@ -283,13 +327,8 @@ export default function App() {
 
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-full border border-white/5">
-            <div className={cn(
-              "w-2 h-2 rounded-full animate-pulse",
-              isConnected ? "bg-green-500" : "bg-red-500"
-            )} />
-            <span className="text-sm font-medium text-zinc-300">
-              {isConnected ? `${room.players.length} متصلين` : "جاري الاتصال..."}
-            </span>
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-sm font-medium text-zinc-300">{room.players.length} متصلين</span>
           </div>
           <button onClick={() => window.location.reload()} className="text-zinc-500 hover:text-white transition-colors">
             <LogOut className="w-5 h-5" />
@@ -318,7 +357,7 @@ export default function App() {
                       {p.name[0]}
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-white">{p.name} {p.id === socket.id && "(أنت)"}</p>
+                      <p className="text-sm font-medium text-white">{p.name} {p.id === playerId && "(أنت)"}</p>
                       <p className="text-[10px] uppercase tracking-tighter text-zinc-500">{p.role}</p>
                     </div>
                   </div>
@@ -472,7 +511,7 @@ export default function App() {
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
                       placeholder="تحدث أمام المحكمة..."
-                      className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all pr-12"
+                      className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all pr-12 text-right"
                     />
                     <button type="button" className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-amber-500 transition-colors">
                       <Mic className="w-5 h-5" />
