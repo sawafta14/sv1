@@ -53,12 +53,16 @@ export default function App() {
 
     const onConnectError = (err: any) => {
       console.error('Socket connection error:', err);
-      setError('فشل الاتصال بالخادم. تأكد من تشغيل الخادم.');
+      setError(`خطأ في الاتصال: ${err.message || 'تعذر الوصول للخادم'}`);
     };
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('connect_error', onConnectError);
+    socket.on('error', (err: any) => {
+      console.error('Socket error:', err);
+      setError(`خطأ تقني: ${typeof err === 'string' ? err : 'حدث خطأ غير متوقع'}`);
+    });
 
     socket.on('room_created', (newRoom: Room) => {
       setRoom(newRoom);

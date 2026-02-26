@@ -133,6 +133,12 @@ io.on("connection", (socket) => {
 });
 
 async function startServer() {
+  // API routes FIRST
+  app.get("/api/status", (req, res) => {
+    res.json({ status: "online", players: io.engine.clientsCount });
+  });
+
+  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
