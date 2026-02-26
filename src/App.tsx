@@ -35,10 +35,31 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [objectionActive, setObjectionActive] = useState<string | null>(null);
   const [isJudge, setIsJudge] = useState(false);
+  const [isConnected, setIsConnected] = useState(socket.connected);
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const onConnect = () => {
+      setIsConnected(true);
+      setError('');
+      console.log('Connected to socket server');
+    };
+
+    const onDisconnect = () => {
+      setIsConnected(false);
+      console.log('Disconnected from socket server');
+    };
+
+    const onConnectError = (err: any) => {
+      console.error('Socket connection error:', err);
+      setError('فشل الاتصال بالخادم. تأكد من تشغيل الخادم.');
+    };
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('connect_error', onConnectError);
+
     socket.on('room_created', (newRoom: Room) => {
       setRoom(newRoom);
       setIsJudge(true);
@@ -245,8 +266,13 @@ export default function App() {
 
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-full border border-white/5">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-sm font-medium text-zinc-300">{room.players.length} متصلين</span>
+            <div className={cn(
+              "w-2 h-2 rounded-full animate-pulse",
+              isConnected ? "bg-green-500" : "bg-red-500"
+            )} />
+            <span className="text-sm font-medium text-zinc-300">
+              {isConnected ? `${room.players.length} متصلين` : "جاري الاتصال..."}
+            </span>
           </div>
           <button onClick={() => window.location.reload()} className="text-zinc-500 hover:text-white transition-colors">
             <LogOut className="w-5 h-5" />

@@ -9,7 +9,10 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: "*",
+    methods: ["GET", "POST"]
   },
+  transports: ['polling', 'websocket'], // Try polling first for better compatibility
+  allowEIO3: true
 });
 
 const PORT = 3000;
@@ -19,6 +22,8 @@ const rooms = new Map();
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
+
+  socket.on("ping", () => socket.emit("pong"));
 
   socket.on("create_room", ({ playerName, password }) => {
     if (password !== "svoo") {
