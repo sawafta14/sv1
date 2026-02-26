@@ -9,7 +9,8 @@ const firebaseConfig = {
   storageBucket: "svoo-6ab9c.firebasestorage.app",
   messagingSenderId: "602871828262",
   appId: "1:602871828262:web:42b403a33b5e3e29a0bbe7",
-  measurementId: "G-Q818ZJ6249"
+  measurementId: "G-Q818ZJ6249",
+  databaseURL: "https://svoo-6ab9c-default-rtdb.firebaseio.com"
 };
 
 export const app = initializeApp(firebaseConfig);

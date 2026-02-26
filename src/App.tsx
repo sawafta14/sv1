@@ -37,6 +37,7 @@ export default function App() {
   const [objectionActive, setObjectionActive] = useState<string | null>(null);
   const [isJudge, setIsJudge] = useState(false);
   const [playerId, setPlayerId] = useState<string>('');
+  const [loading, setLoading] = useState(false);
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -89,6 +90,10 @@ export default function App() {
   const createRoom = async () => {
     if (!playerName || !password) return setError('يرجى إدخال الاسم وكلمة المرور');
     if (password !== 'svoo') return setError('كلمة مرور القاضي غير صحيحة');
+    if (!playerId) return setError('جاري تهيئة معرف اللاعب، يرجى المحاولة مرة أخرى');
+
+    setLoading(true);
+    setError('');
 
     const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
     const newRoom = {
@@ -99,34 +104,53 @@ export default function App() {
       phase: 'waiting',
       players: {
         [playerId]: { id: playerId, name: playerName, role: 'judge' }
-      }
+      },
+      logs: {} // Initialize logs
     };
 
     try {
-      await set(ref(db, `rooms/${newRoomId}`), newRoom);
-      setRoomId(newRoomId);
-      setIsJudge(true);
-      setError('');
+      const roomRef = ref(db, `rooms/${newRoomId}`);
+      await set(roomRef, newRoom);
       
       // Handle disconnect
       onDisconnect(ref(db, `rooms/${newRoomId}/players/${playerId}`)).remove();
-    } catch (err) {
-      setError('فشل إنشاء الغرفة');
+      
+      setRoomId(newRoomId);
+      setIsJudge(true);
+    } catch (err: any) {
+      console.error("Firebase Error:", err);
+      if (err.message?.includes('permission_denied')) {
+        setError('خطأ في الصلاحيات: يرجى التأكد من ضبط قواعد Firebase (Rules) لتسمح بالقراءة والكتابة.');
+      } else {
+        setError('فشل إنشاء الغرفة: ' + (err.message || 'خطأ غير معروف'));
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
   const joinRoom = async () => {
     if (!playerName || !roomId) return setError('يرجى إدخال الاسم ورقم الغرفة');
+    if (!playerId) return setError('جاري تهيئة معرف اللاعب، يرجى المحاولة مرة أخرى');
+
+    setLoading(true);
+    setError('');
     const upperRoomId = roomId.toUpperCase();
     
     try {
       const snapshot = await get(ref(db, `rooms/${upperRoomId}`));
-      if (!snapshot.exists()) return setError('الغرفة غير موجودة');
+      if (!snapshot.exists()) {
+        setLoading(false);
+        return setError('الغرفة غير موجودة');
+      }
       
       const roomData = snapshot.val();
       const players = roomData.players || {};
       
-      if (Object.keys(players).length >= 12) return setError('الغرفة ممتلئة');
+      if (Object.keys(players).length >= 12) {
+        setLoading(false);
+        return setError('الغرفة ممتلئة');
+      }
 
       await set(ref(db, `rooms/${upperRoomId}/players/${playerId}`), {
         id: playerId,
@@ -134,13 +158,19 @@ export default function App() {
         role: 'unassigned'
       });
 
-      setRoomId(upperRoomId);
-      setError('');
-      
       // Handle disconnect
       onDisconnect(ref(db, `rooms/${upperRoomId}/players/${playerId}`)).remove();
-    } catch (err) {
-      setError('فشل الانضمام للغرفة');
+      
+      setRoomId(upperRoomId);
+    } catch (err: any) {
+      console.error("Firebase Error:", err);
+      if (err.message?.includes('permission_denied')) {
+        setError('خطأ في الصلاحيات: يرجى التأكد من ضبط قواعد Firebase (Rules) لتسمح بالقراءة والكتابة.');
+      } else {
+        setError('فشل الانضمام للغرفة: ' + (err.message || 'خطأ غير معروف'));
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -274,9 +304,10 @@ export default function App() {
                 </div>
                 <button 
                   onClick={createRoom}
-                  className="w-full mt-6 bg-amber-500 hover:bg-amber-400 text-black font-bold py-4 rounded-xl transition-all shadow-lg shadow-amber-500/20"
+                  disabled={loading}
+                  className="w-full mt-6 bg-amber-500 hover:bg-amber-400 disabled:bg-amber-800 text-black font-bold py-4 rounded-xl transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
                 >
-                  بدء جلسة جديدة
+                  {loading ? 'جاري البدء...' : 'بدء جلسة جديدة'}
                 </button>
               </motion.div>
             ) : (
@@ -291,9 +322,10 @@ export default function App() {
                 />
                 <button 
                   onClick={joinRoom}
-                  className="w-full mt-6 bg-indigo-500 hover:bg-indigo-400 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-indigo-500/20"
+                  disabled={loading}
+                  className="w-full mt-6 bg-indigo-500 hover:bg-indigo-400 disabled:bg-indigo-800 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2"
                 >
-                  دخول المحكمة
+                  {loading ? 'جاري الدخول...' : 'دخول المحكمة'}
                 </button>
               </motion.div>
             )}
