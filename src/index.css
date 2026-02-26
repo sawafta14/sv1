@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@100..900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Amiri", serif;
+}
+
+@layer base {
+  body {
+    @apply bg-zinc-950 text-zinc-100 font-sans antialiased;
+    direction: rtl;
+  }
+}
+
+.court-gradient {
+  background: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #09090b 100%);
+}
+
+.wood-panel {
+  background: linear-gradient(to bottom, #451a03, #270e01);
+  border-bottom: 4px solid #1c0a00;
+}
+
+@keyframes gavel-slam {
+  0% { transform: rotate(-45deg); }
+  50% { transform: rotate(0deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.animate-gavel {
+  animation: gavel-slam 0.3s ease-out;
+}
