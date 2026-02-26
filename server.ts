@@ -15,10 +15,13 @@ const io = new Server(httpServer, {
   allowEIO3: true
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Game State
 const rooms = new Map();
+
+// Middleware for production
+app.set('trust proxy', 1);
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);

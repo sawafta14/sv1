@@ -53,8 +53,21 @@ export default function App() {
 
     const onConnectError = (err: any) => {
       console.error('Socket connection error:', err);
-      setError(`خطأ في الاتصال: ${err.message || 'تعذر الوصول للخادم'}`);
+      if (window.location.hostname.includes('vercel.app')) {
+        setError('تنبيه: منصة Vercel لا تدعم نظام الأونلاين لهذه اللعبة. يرجى استخدام رابط المعاينة في AI Studio.');
+      } else {
+        setError(`خطأ في الاتصال: ${err.message || 'تعذر الوصول للخادم'}`);
+      }
     };
+
+    // Check if server is alive via HTTP first
+    fetch('/api/status')
+      .then(res => res.json())
+      .then(data => console.log('Server Status:', data))
+      .catch(err => {
+        console.error('Server unreachable via HTTP:', err);
+        setError('الخادم غير مستجيب. جاري إعادة المحاولة...');
+      });
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
